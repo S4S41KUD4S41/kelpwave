@@ -16,7 +16,7 @@ import subprocess
 HOME = "/data/data/com.termux/files/home"
 SETUP_SCRIPT = os.path.join(HOME, "kelpwave/tools/setup.sh")
 DOCTOR_SCRIPT = os.path.join(HOME, "kelpwave/tools/doctor.py")
-COMPANION = os.path.join(HOME, "kelpwave/agents/kelpwave_companion_v11_memory.py")
+COMPANION = os.path.join(HOME, "kelpwave/agents/kelpwave_companion_v12.py")
 
 def run_setup():
     print("\n[*] Запускаю настройку окружения (setup.sh)...")
@@ -34,7 +34,7 @@ def run_doctor():
         sys.exit(1)
 
 def main():
-    print("🌊 KELPWAVE LAUNCHER v10\n")
+    print("🌊 KELPWAVE LAUNCHER v12\n")
 
     # 1. Setup (если ещё не настроено)
     if not os.path.isdir(os.path.join(HOME, "storage/shared")):
