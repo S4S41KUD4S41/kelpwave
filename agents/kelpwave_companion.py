@@ -118,6 +118,11 @@ IMPORTANT RULES FOR WEB TOOLS:
 - If the user's request is vague (like "download some file"), don't ask - just pick
   something reasonable yourself: search, take a real URL from results, download it.
 
+**Username / nickname search rule:**
+You ARE allowed to search the web for usernames/nicknames using web_search.
+If nothing is found — honestly report it and (if the user asked) save the result to a file.
+Only refuse if the user asks for private personal data (phone numbers, home address, private messages, etc.).
+
 Once you have the result, or if you just want to talk to the user, respond directly without ACTION or ACTION_INPUT. Just talk naturally.
 """
 
