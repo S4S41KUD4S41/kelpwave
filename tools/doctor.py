@@ -12,7 +12,11 @@ DOWNLOADS_DIR = os.path.join(HOME, "storage/shared/Download/kelpwave")
 LLAMA_BIN_DIR = os.path.join(HOME, "llama.cpp/build/bin")
 
 MODELS = {
-    "companion (7B)": [
+    "companion (Qwen3-4B, рекомендуется)": [
+        os.path.join(HOME, "llama.cpp/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"),
+        os.path.join(DOWNLOADS_DIR, "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"),
+    ],
+    "companion (7B, запасная)": [
         os.path.join(HOME, "llama.cpp/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf"),
         os.path.join(DOWNLOADS_DIR, "qwen2.5-coder-7b-instruct-q4_k_m.gguf"),
     ],
@@ -23,9 +27,11 @@ MODELS = {
 }
 
 MODEL_URLS = {
-    "companion (7B)": "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+    "companion (Qwen3-4B, рекомендуется)": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "companion (7B, запасная)": "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
     "reflexion (0.5B)": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
 }
+OPTIONAL = {"companion (7B, запасная)"}  # отсутствие — не ошибка, если есть Qwen3
 
 issues = 0
 
@@ -84,25 +90,36 @@ else:
 
 # 4. Модели
 print(f"{B}4. Модели{E}")
+found_models = {}
 for name, paths in MODELS.items():
     found = None
     for p in paths:
         if os.path.exists(p):
             found = p
             break
+    found_models[name] = found
     if found:
         size_gb = os.path.getsize(found) / 1024**3
         ok(f"{name}: {found} ({size_gb:.2f} ГБ)")
         if "/storage/shared/" in found:
             warn(f"{name} лежит на /sdcard — грузится медленно",
                  f'mkdir -p ~/llama.cpp/models && mv "{found}" ~/llama.cpp/models/')
-        expected = 4.0 if "7b" in found.lower() else 0.3
+        expected = 4.0 if "7b" in found.lower() else (1.8 if "4b" in found.lower() else 0.3)
         if size_gb < expected:
             fail(f"{name}: файл подозрительно маленький — возможно, скачан не полностью",
                  f"скачай заново: wget -c -P ~/llama.cpp/models/ \"{MODEL_URLS[name]}\"")
+    elif name in OPTIONAL:
+        warn(f"{name}: нет (не страшно, если есть Qwen3-4B)")
     else:
         fail(f"{name}: модель не найдена",
              f"wget -c -P ~/llama.cpp/models/ \"{MODEL_URLS[name]}\"")
+
+# companion должен иметь хотя бы одну модель
+if not found_models.get("companion (Qwen3-4B, рекомендуется)") and not found_models.get("companion (7B, запасная)"):
+    pass  # уже зафейлено выше
+elif not found_models.get("companion (Qwen3-4B, рекомендуется)"):
+    warn("Рекомендую скачать Qwen3-4B — новее, агентнее и быстрее, чем 7B Coder (2.3 ГБ)",
+         f"wget -c -P ~/llama.cpp/models/ \"{MODEL_URLS['companion (Qwen3-4B, рекомендуется)']}\"")
 
 # 5. Свободное место и RAM
 print(f"{B}5. Ресурсы{E}")

@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-# 🌊 KELPWAVE ULTIMATE COMPANION v6 — отличаем файлы от веб-страниц
-# Изменения относительно v5:
-#  [FIX] download_file: если по URL отдаётся HTML-страница (а не файл) —
-#        скачивание отклоняется с объяснением; раньше агент "успешно"
-#        сохранял страницы онлайн-генераторов вместо настоящих файлов
-#  [NEW] tools/doctor.py: проверка окружения (llama.cpp, модели, storage)
+# 🌊 KELPWAVE ULTIMATE COMPANION v7 — умный URL Guard + поддержка Qwen3
+# Изменения относительно v6:
+#  [FIX] URL Guard стал умным: выдуманный URL теперь не блокируется вслепую,
+#        а ПРОВЕРЯЕТСЯ реальным HEAD-запросом. Существует — разрешаем,
+#        нет — блокируем. (Раньше блокировались даже правильные догадки.)
+#  [NEW] Поддержка Qwen3-4B-Instruct-2507 как основной модели (агентная,
+#        меньше и быстрее 7B Coder). Автовыбор: Qwen3 если скачана, иначе 7B.
+#        Скачать: см. tools/doctor.py или README.
+#  [FIX] Запрещено "спрашивать пользователя" через run_bash echo — модель
+#        теперь отвечает пользователю напрямую, если нужно уточнение.
+# Изменения v6 (сохранены):
+#  [FIX] download_file отклоняет HTML-страницы вместо "скачивания" их
 # Изменения v5 (сохранены):
 #  [NEW] URL Guard: модель часто галлюцинирует несуществующие ссылки (HTTP 404).
 #        Теперь download_file/fetch_page принимают только URL, которые реально
@@ -34,13 +40,19 @@ LLAMA_SERVER_PATH = os.path.join(HOME, "llama.cpp/build/bin/llama-server")
 DOWNLOADS_DIR = os.path.join(HOME, "storage/shared/Download/kelpwave")
 SERVER_LOG_PATH = os.path.join(DOWNLOADS_DIR, "server_log.txt")
 
-MODEL_NAME = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
-# Ищем модель в нескольких местах: домашняя папка быстрее, чем /sdcard (FUSE)
-MODEL_SEARCH_PATHS = [
-    os.path.join(HOME, "llama.cpp/models", MODEL_NAME),
-    os.path.join(HOME, "models", MODEL_NAME),
-    os.path.join(DOWNLOADS_DIR, MODEL_NAME),
+# v7: приоритет — агентная Qwen3-4B (новее, меньше, лучше следует инструкциям),
+# затем привычная 7B Coder. Ищем в домашней папке (быстро) и на /sdcard.
+MODEL_CANDIDATES = [
+    "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "qwen3-4b-instruct-2507-q4_k_m.gguf",
+    "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
 ]
+MODEL_SEARCH_DIRS = [
+    os.path.join(HOME, "llama.cpp/models"),
+    os.path.join(HOME, "models"),
+    DOWNLOADS_DIR,
+]
+MODEL_SEARCH_PATHS = [os.path.join(d, n) for n in MODEL_CANDIDATES for d in MODEL_SEARCH_DIRS]
 
 SERVER_PORT = 8080
 SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/completion"
@@ -75,6 +87,10 @@ IMPORTANT RULES FOR WEB TOOLS:
 - download_file only works with DIRECT file links (ending in .txt/.zip/.pdf/.md etc).
   A page describing or generating files is NOT a file. Good sources of real files:
   raw.githubusercontent.com, or links that end with a file extension.
+- To ask the user something, just reply in plain text WITHOUT any ACTION.
+  NEVER use run_bash echo to "ask" - the user cannot answer a bash command.
+- If the user's request is vague (like "download some file"), don't ask - just pick
+  something reasonable yourself: search, take a real URL from results, download it.
 
 Once you have the result, or if you just want to talk to the user, respond directly without ACTION or ACTION_INPUT. Just talk naturally.
 """
@@ -361,6 +377,19 @@ def is_known_url(url, known_urls):
             return True
     return False
 
+def url_exists(url, timeout=8):
+    """v7: быстрая проверка, существует ли URL на самом деле (HEAD-запрос).
+    Так выдуманные, но УГАДАННЫЕ моделью ссылки не блокируются зря."""
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": WEB_UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return 200 <= r.status < 400
+    except urllib.error.HTTPError as e:
+        # 405 = HEAD не поддерживается, но URL живой
+        return e.code in (403, 405)
+    except Exception:
+        return False
+
 def stop_server(server_process):
     if server_process:
         try:
@@ -369,7 +398,7 @@ def stop_server(server_process):
             pass
 
 def main():
-    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v6 (CODER 7B + FILE CHECK){C_END}")
+    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v7 (SMART URL GUARD + QWEN3-READY){C_END}")
 
     # --- Предполётные проверки (FIX: раньше их не было) ---
     if not os.path.exists(LLAMA_SERVER_PATH):
@@ -462,20 +491,26 @@ def main():
                         continue
                     seen_calls.add(call_signature)
 
-                    # --- URL GUARD (v5): блокируем выдуманные ссылки ---
+                    # --- URL GUARD (v5, поумнел в v7) ---
                     if action.lower() in ("download_file", "fetch_page"):
                         candidate = clean_tool_input(action_input)
                         if candidate.startswith("http") and not is_known_url(candidate, known_urls):
-                            print(f"\n{C_YELLOW}[🛡️ URL GUARD] Модель выдумала URL: {candidate[:80]}{C_END}")
-                            real_urls = "\n".join(f"- {u}" for u in sorted(known_urls)[:8]) or "(none yet — use web_search first)"
-                            history.append({"role": "assistant", "content": response})
-                            history.append({"role": "user", "content":
-                                f"OBSERVATION:\n[SYSTEM] BLOCKED: the URL you tried does NOT exist - "
-                                f"you invented it. NEVER invent URLs. You may ONLY use URLs that "
-                                f"appeared in earlier observations. Currently known REAL urls:\n{real_urls}\n"
-                                f"Pick one of these, or use web_search to find more."})
-                            loop_steps += 1
-                            continue
+                            # v7: не блокируем вслепую — проверяем реальным запросом
+                            print(f"\n{C_YELLOW}[🛡️ URL GUARD] URL не из наблюдений: {candidate[:70]} — проверяю...{C_END}")
+                            if url_exists(candidate):
+                                print(f"{C_GREEN}[🛡️ URL GUARD] URL существует — разрешаю.{C_END}")
+                                known_urls.add(candidate)
+                            else:
+                                print(f"{C_RED}[🛡️ URL GUARD] URL не существует — блокирую.{C_END}")
+                                real_urls = "\n".join(f"- {u}" for u in sorted(known_urls)[:8]) or "(none yet — use web_search first)"
+                                history.append({"role": "assistant", "content": response})
+                                history.append({"role": "user", "content":
+                                    f"OBSERVATION:\n[SYSTEM] BLOCKED: I checked this URL and it does NOT exist "
+                                    f"(you invented it). NEVER invent URLs. You may ONLY use URLs that "
+                                    f"appeared in earlier observations. Currently known REAL urls:\n{real_urls}\n"
+                                    f"Pick one of these, or use web_search to find more."})
+                                loop_steps += 1
+                                continue
 
                     print(f"\n🧠 {C_CYAN}Agent Thought:{C_END} {thought}")
                     print(f"🎬 {C_CYAN}Calling Tool {action} with:{C_END} {action_input}")
