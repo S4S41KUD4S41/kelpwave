@@ -1,0 +1,22 @@
+# Модели — слишком большие для git
+*.gguf
+*.bin
+models/
+
+# Рабочие файлы агентов
+lessons_learned.json
+lessons_learned.backup.json
+server_log.txt
+solution.py
+successful_solution_*.py
+temp_prompt.txt
+temp_output.txt
+temp_error.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# Секреты (на будущее)
+.env
+*.key
