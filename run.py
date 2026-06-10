@@ -16,7 +16,7 @@ import subprocess
 HOME = "/data/data/com.termux/files/home"
 SETUP_SCRIPT = os.path.join(HOME, "kelpwave/tools/setup.sh")
 DOCTOR_SCRIPT = os.path.join(HOME, "kelpwave/tools/doctor.py")
-COMPANION = os.path.join(HOME, "kelpwave/agents/kelpwave_companion.py")
+COMPANION = os.path.join(HOME, "kelpwave/agents/kelpwave_companion_v10_reflexion.py")
 
 def run_setup():
     print("\n[*] Запускаю настройку окружения (setup.sh)...")
