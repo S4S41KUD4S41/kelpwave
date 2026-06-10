@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-# 🌊 KELPWAVE ULTIMATE COMPANION v4 — защита от зацикливания
-# Изменения относительно v3:
-#  [FIX] Анти-зацикливание: повтор того же инструмента с тем же входом блокируется,
-#        агенту отправляется указание сделать ДРУГОЙ шаг или ответить пользователю
-#  [FIX] Если лимит шагов исчерпан — агент обязан дать финальный ответ пользователю
-#        (раньше просто молча обрывался)
-#  [FIX] Подсказка после web_search: "теперь используй URL из результатов"
+# 🌊 KELPWAVE ULTIMATE COMPANION v5 — защита от выдуманных URL
+# Изменения относительно v4:
+#  [NEW] URL Guard: модель часто галлюцинирует несуществующие ссылки (HTTP 404).
+#        Теперь download_file/fetch_page принимают только URL, которые реально
+#        встречались в результатах поиска или сообщениях пользователя.
+#        При блокировке модели показывается список НАСТОЯЩИХ доступных URL.
+#  [FIX] После ошибки 404 модель получает явное указание не выдумывать ссылки.
+# Изменения v4 (сохранены):
+#  [FIX] Loop Guard: повтор того же инструмента с тем же входом блокируется
+#  [FIX] Принудительный финальный ответ при исчерпании лимита шагов
 # Изменения v3 (сохранены):
 #  [FIX] web_search через lite.duckduckgo.com + запасной Bing (вместо капчи)
 #  [FIX] fetch_page: gzip, raw-файлы, лимит 3000 символов
@@ -61,7 +64,8 @@ IMPORTANT RULES FOR WEB TOOLS:
 - To download a file from GitHub, use the raw URL format:
   https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>
   Example: https://raw.githubusercontent.com/ggml-org/llama.cpp/master/README.md
-- Never invent URLs. If a URL returns 404, do a web_search to find the correct one.
+- NEVER invent or guess URLs - invented URLs always fail with 404. Use ONLY the exact
+  URLs that appear in web_search results or that the user gave you.
 - Use download_file (not fetch_page) when the user wants to SAVE a file.
 
 Once you have the result, or if you just want to talk to the user, respond directly without ACTION or ACTION_INPUT. Just talk naturally.
@@ -322,6 +326,26 @@ def parse_action(output):
     ai = action_input_match.group(1).strip() if action_input_match else ""
     return t, a, ai
 
+# ---------- URL Guard (v5) ----------
+URL_RE = re.compile(r'https?://[^\s"\'<>\)\]]+')
+
+def extract_urls(text):
+    """Достаёт все URL из текста (результаты поиска, сообщения пользователя)."""
+    return set(u.rstrip('.,;:!?') for u in URL_RE.findall(text or ""))
+
+def is_known_url(url, known_urls):
+    """URL разрешён, если он встречался дословно, или является вариантом
+    известного (github blob->raw), или это страница с известного домена+пути."""
+    if url in known_urls:
+        return True
+    # github.com/owner/repo/blob/... преобразуется в raw — разрешаем обе формы
+    m = re.match(r'https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(.+)', url)
+    if m:
+        blob_form = f"https://github.com/{m.group(1)}/{m.group(2)}/blob/{m.group(3)}"
+        if blob_form in known_urls:
+            return True
+    return False
+
 def stop_server(server_process):
     if server_process:
         try:
@@ -330,7 +354,7 @@ def stop_server(server_process):
             pass
 
 def main():
-    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v4 (CODER 7B + LOOP GUARD){C_END}")
+    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v5 (CODER 7B + URL GUARD){C_END}")
 
     # --- Предполётные проверки (FIX: раньше их не было) ---
     if not os.path.exists(LLAMA_SERVER_PATH):
@@ -382,6 +406,7 @@ def main():
             max_steps = 6
             seen_calls = set()      # (action, input) — что уже вызывалось в этом ходу
             repeat_strikes = 0      # сколько раз агент пытался повторить то же самое
+            known_urls = extract_urls(user_input)  # v5: URL, которым можно доверять
 
             while not agent_turn_completed and loop_steps < max_steps:
                 response = query_local_server(history)
@@ -422,6 +447,21 @@ def main():
                         continue
                     seen_calls.add(call_signature)
 
+                    # --- URL GUARD (v5): блокируем выдуманные ссылки ---
+                    if action.lower() in ("download_file", "fetch_page"):
+                        candidate = clean_tool_input(action_input)
+                        if candidate.startswith("http") and not is_known_url(candidate, known_urls):
+                            print(f"\n{C_YELLOW}[🛡️ URL GUARD] Модель выдумала URL: {candidate[:80]}{C_END}")
+                            real_urls = "\n".join(f"- {u}" for u in sorted(known_urls)[:8]) or "(none yet — use web_search first)"
+                            history.append({"role": "assistant", "content": response})
+                            history.append({"role": "user", "content":
+                                f"OBSERVATION:\n[SYSTEM] BLOCKED: the URL you tried does NOT exist - "
+                                f"you invented it. NEVER invent URLs. You may ONLY use URLs that "
+                                f"appeared in earlier observations. Currently known REAL urls:\n{real_urls}\n"
+                                f"Pick one of these, or use web_search to find more."})
+                            loop_steps += 1
+                            continue
+
                     print(f"\n🧠 {C_CYAN}Agent Thought:{C_END} {thought}")
                     print(f"🎬 {C_CYAN}Calling Tool {action} with:{C_END} {action_input}")
 
@@ -446,6 +486,8 @@ def main():
                         obs = "[Error: Unknown tool]"
 
                     print(f"👀 {C_GREEN}Observation Result:{C_END}\n{obs[:500]}")
+
+                    known_urls |= extract_urls(obs)  # v5: запоминаем реальные URL из результатов
 
                     history.append({"role": "assistant", "content": response})
                     history.append({"role": "user", "content": f"OBSERVATION:\n{obs}"})
