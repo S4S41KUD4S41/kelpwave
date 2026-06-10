@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-# 🌊 KELPWAVE ULTIMATE COMPANION v7 — умный URL Guard + поддержка Qwen3
-# Изменения относительно v6:
+# 🌊 KELPWAVE ULTIMATE COMPANION v8 — fetch_page отдаёт ссылки со страницы
+# Изменения относительно v7:
+#  [FIX] КЛЮЧЕВОЙ БАГ: fetch_page вырезал HTML-теги вместе со ВСЕМИ ссылками.
+#        Агент доходил до страницы со списком файлов, но не видел ни одной
+#        ссылки и был вынужден гадать имена файлов (которые блокировал Guard).
+#        Теперь fetch_page возвращает текст + список ссылок, причём прямые
+#        ссылки на файлы (.txt/.zip/.pdf...) выделены отдельной секцией.
+# Изменения v7 (сохранены):
 #  [FIX] URL Guard стал умным: выдуманный URL теперь не блокируется вслепую,
 #        а ПРОВЕРЯЕТСЯ реальным HEAD-запросом. Существует — разрешаем,
 #        нет — блокируем. (Раньше блокировались даже правильные догадки.)
@@ -311,11 +317,38 @@ def tool_fetch_page(url):
         # Если это не HTML (например, .md или .txt с raw.githubusercontent) — отдаём как есть
         if "<html" not in text[:2000].lower() and "<body" not in text[:2000].lower():
             return text[:3000] + ("\n... [truncated]" if len(text) > 3000 else "")
-        text = re.sub(r'<script.*?>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style.*?>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', ' ', text)
-        text = " ".join(html_mod.unescape(text).split())
-        return text[:3000] + ("\n... [truncated]" if len(text) > 3000 else "")
+
+        # v8: СНАЧАЛА собираем все ссылки (раньше они вырезались вместе с тегами!)
+        base = clean_url
+        links = []
+        seen = set()
+        for m in re.finditer(r'<a[^>]+href="([^"#]+)"[^>]*>(.*?)</a>', text, re.DOTALL | re.IGNORECASE):
+            href = html_mod.unescape(m.group(1).strip())
+            label = " ".join(strip_tags(m.group(2)).split())[:60]
+            absolute = urllib.parse.urljoin(base, href)
+            if not absolute.startswith("http") or absolute in seen:
+                continue
+            seen.add(absolute)
+            links.append((absolute, label))
+
+        # Прямые ссылки на файлы — в начало списка (их обычно и ищет агент)
+        FILE_EXT = re.compile(r'\.(txt|zip|pdf|json|csv|md|xml|gguf|tar|gz|7z|docx|xlsx|png|jpg|mp3|wav)([?#]|$)', re.IGNORECASE)
+        file_links = [(u, l) for u, l in links if FILE_EXT.search(u)]
+        page_links = [(u, l) for u, l in links if not FILE_EXT.search(u)]
+
+        body = re.sub(r'<script.*?>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        body = re.sub(r'<style.*?>.*?</style>', '', body, flags=re.DOTALL | re.IGNORECASE)
+        body = re.sub(r'<[^>]+>', ' ', body)
+        body = " ".join(html_mod.unescape(body).split())
+
+        out = body[:1800] + ("\n... [text truncated]" if len(body) > 1800 else "")
+        if file_links:
+            out += "\n\n=== DIRECT FILE LINKS ON THIS PAGE (use these with download_file!) ===\n"
+            out += "\n".join(f"- {u}  ({l})" for u, l in file_links[:15])
+        if page_links:
+            out += "\n\n=== OTHER LINKS ON THIS PAGE ===\n"
+            out += "\n".join(f"- {u}  ({l})" for u, l in page_links[:10])
+        return out
     except Exception as e:
         return f"[Error fetching page: {e}]"
 
@@ -398,7 +431,7 @@ def stop_server(server_process):
             pass
 
 def main():
-    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v7 (SMART URL GUARD + QWEN3-READY){C_END}")
+    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v8 (LINK EXTRACTION){C_END}")
 
     # --- Предполётные проверки (FIX: раньше их не было) ---
     if not os.path.exists(LLAMA_SERVER_PATH):
