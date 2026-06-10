@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-# 🌊 KELPWAVE ULTIMATE COMPANION v5 — защита от выдуманных URL
-# Изменения относительно v4:
+# 🌊 KELPWAVE ULTIMATE COMPANION v6 — отличаем файлы от веб-страниц
+# Изменения относительно v5:
+#  [FIX] download_file: если по URL отдаётся HTML-страница (а не файл) —
+#        скачивание отклоняется с объяснением; раньше агент "успешно"
+#        сохранял страницы онлайн-генераторов вместо настоящих файлов
+#  [NEW] tools/doctor.py: проверка окружения (llama.cpp, модели, storage)
+# Изменения v5 (сохранены):
 #  [NEW] URL Guard: модель часто галлюцинирует несуществующие ссылки (HTTP 404).
 #        Теперь download_file/fetch_page принимают только URL, которые реально
 #        встречались в результатах поиска или сообщениях пользователя.
@@ -67,6 +72,9 @@ IMPORTANT RULES FOR WEB TOOLS:
 - NEVER invent or guess URLs - invented URLs always fail with 404. Use ONLY the exact
   URLs that appear in web_search results or that the user gave you.
 - Use download_file (not fetch_page) when the user wants to SAVE a file.
+- download_file only works with DIRECT file links (ending in .txt/.zip/.pdf/.md etc).
+  A page describing or generating files is NOT a file. Good sources of real files:
+  raw.githubusercontent.com, or links that end with a file extension.
 
 Once you have the result, or if you just want to talk to the user, respond directly without ACTION or ACTION_INPUT. Just talk naturally.
 """
@@ -306,6 +314,13 @@ def tool_download_file(url):
         clean_url = f"https://raw.githubusercontent.com/{m.group(1)}/{m.group(2)}/{m.group(3)}"
     try:
         raw = http_get(clean_url, timeout=60)
+        # v6: проверка "это файл или веб-страница?"
+        head = raw[:2000].decode("utf-8", errors="replace").lower()
+        if "<!doctype html" in head or "<html" in head:
+            return ("[Error: this URL is an HTML PAGE, not a downloadable file. "
+                    "Downloading it would just save the page itself. "
+                    "Look for a DIRECT file link (usually ends with .txt/.zip/.pdf/.json etc). "
+                    "Tip: pages with 'generator' in the name are tools, not files.]")
         fname = os.path.basename(urllib.parse.urlparse(clean_url).path) or "downloaded_file"
         fname = re.sub(r'[^\w.\-]', '_', fname)
         dest = os.path.join(DOWNLOADS_DIR, fname)
@@ -354,7 +369,7 @@ def stop_server(server_process):
             pass
 
 def main():
-    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v5 (CODER 7B + URL GUARD){C_END}")
+    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v6 (CODER 7B + FILE CHECK){C_END}")
 
     # --- Предполётные проверки (FIX: раньше их не было) ---
     if not os.path.exists(LLAMA_SERVER_PATH):
