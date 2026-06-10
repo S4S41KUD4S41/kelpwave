@@ -28,14 +28,19 @@
 [HuggingFace](https://huggingface.co/Qwen). Положи их в `~/llama.cpp/models/`
 или в `~/storage/shared/Download/kelpwave/` — агент найдёт сам.
 
-## Быстрый старт
+## Быстрый старт (рекомендуется)
 
 ```bash
 pkg install -y python git
 termux-setup-storage
-git clone https://github.com/<ТВОЙ_ЛОГИН>/kelpwave.git ~/kelpwave
-python ~/kelpwave/agents/kelpwave_companion.py
+git clone https://github.com/S4S41KUD4S41/kelpwave.git ~/kelpwave
+python ~/kelpwave/run.py
 ```
+
+`run.py` автоматически:
+1. Запустит `tools/setup.sh` (установит всё нужное)
+2. Запустит `tools/doctor.py` (проверит окружение)
+3. Запустит `agents/kelpwave_companion_v10.py` (новая свободная версия)
 
 ## Структура рабочих файлов (не в git)
 
