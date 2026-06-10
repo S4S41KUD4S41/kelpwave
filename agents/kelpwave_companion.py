@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-# 🌊 KELPWAVE ULTIMATE COMPANION v8 — fetch_page отдаёт ссылки со страницы
-# Изменения относительно v7:
-#  [FIX] КЛЮЧЕВОЙ БАГ: fetch_page вырезал HTML-теги вместе со ВСЕМИ ссылками.
-#        Агент доходил до страницы со списком файлов, но не видел ни одной
-#        ссылки и был вынужден гадать имена файлов (которые блокировал Guard).
-#        Теперь fetch_page возвращает текст + список ссылок, причём прямые
-#        ссылки на файлы (.txt/.zip/.pdf...) выделены отдельной секцией.
+# 🌊 KELPWAVE ULTIMATE COMPANION v9 — model-agnostic + паспорт окружения
+# Изменения относительно v8:
+#  [NEW] МОДЕЛЕНЕЗАВИСИМОСТЬ: переход на /v1/chat/completions + --jinja.
+#        llama-server сам применяет родной шаблон модели. Теперь работают
+#        Qwen, Gemma, Llama и любые другие GGUF без правки кода.
+#  [NEW] Паспорт окружения в промпте: агент знает свои пути (Downloads,
+#        home), что storage уже настроен, и что pkg install уже не нужен.
+#  [FIX] run_bash: бан тяжёлых команд (pkg install/upgrade, termux-setup-storage)
+#        во время работы — они душат CPU (таймауты модели) и переполняют
+#        контекст выводом. Всё нужное ставится заранее через tools/setup.sh.
+#  [FIX] run_bash: вывод обрезается до 1500 символов (защита контекста).
+#  [NEW] tools/setup.sh — предустановка всего окружения одной командой.
+# Изменения v8 (сохранены):
+#  [FIX] fetch_page возвращает текст + список ссылок (прямые файловые отдельно)
 # Изменения v7 (сохранены):
 #  [FIX] URL Guard стал умным: выдуманный URL теперь не блокируется вслепую,
 #        а ПРОВЕРЯЕТСЯ реальным HEAD-запросом. Существует — разрешаем,
@@ -48,9 +55,12 @@ SERVER_LOG_PATH = os.path.join(DOWNLOADS_DIR, "server_log.txt")
 
 # v7: приоритет — агентная Qwen3-4B (новее, меньше, лучше следует инструкциям),
 # затем привычная 7B Coder. Ищем в домашней папке (быстро) и на /sdcard.
+# v9: благодаря --jinja работает любая модель. Порядок = приоритет.
 MODEL_CANDIDATES = [
     "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
     "qwen3-4b-instruct-2507-q4_k_m.gguf",
+    "gemma-3-4b-it-Q4_K_M.gguf",                # Google Gemma 3 (альтернатива)
+    "Llama-3.2-3B-Instruct-Q4_K_M.gguf",        # Meta Llama 3.2 (легче, 1.9 ГБ)
     "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
 ]
 MODEL_SEARCH_DIRS = [
@@ -61,7 +71,7 @@ MODEL_SEARCH_DIRS = [
 MODEL_SEARCH_PATHS = [os.path.join(d, n) for n in MODEL_CANDIDATES for d in MODEL_SEARCH_DIRS]
 
 SERVER_PORT = 8080
-SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/completion"
+SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/v1/chat/completions"  # v9: model-agnostic API
 
 SYSTEM_PROMPT = """You are "kelpwave-companion", a fully autonomous, highly intelligent AI Agent.
 Your goal is to converse with the user and help them with tasks in their Termux environment.
@@ -80,6 +90,16 @@ ACTION: run_bash
 ACTION_INPUT: ls -la
 
 Then wait for the observation (OBSERVATION: ...) before continuing.
+
+YOUR ENVIRONMENT (already set up, do NOT re-install anything):
+- You run inside Termux on the user's Android phone.
+- Termux home: /data/data/com.termux/files/home (= ~). NOT visible in the phone's file manager.
+- SHARED storage the user CAN see in their file manager: /sdcard/Download/kelpwave
+  (your downloads folder; write user-facing files THERE).
+- Storage access is ALREADY granted. NEVER run termux-setup-storage.
+- Required packages are ALREADY installed. NEVER run pkg install / apt install /
+  pkg upgrade - they are slow, flood the output and will time you out.
+- python3, git, curl, wget are available in run_bash.
 
 IMPORTANT RULES FOR WEB TOOLS:
 - To find something, FIRST use web_search with simple keywords, THEN use the URLs from the results.
@@ -138,6 +158,7 @@ def start_background_server(model_path):
         "-t", "5",
         "-tb", "6",
         "-fa", "auto",          # FIX: новый llama.cpp требует значение для -fa
+        "--jinja",              # v9: родной chat-шаблон модели (Qwen/Gemma/Llama...)
         "--port", str(SERVER_PORT),
         "--host", "127.0.0.1",
         # --mlock убран: на /sdcard он не работает и ломал запуск
@@ -173,16 +194,15 @@ def start_background_server(model_path):
         return None
 
 def query_local_server(prompt_history, max_tokens=400, temp=0.3):
-    full_prompt = f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
-    for msg in prompt_history[-10:]:
-        full_prompt += f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
-    full_prompt += "<|im_start|>assistant\nTHOUGHT:"
+    # v9: chat completions API — llama-server сам применяет родной шаблон модели
+    # (ChatML для Qwen, свой для Gemma/Llama и т.д.). Код стал моделенезависимым.
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages += prompt_history[-10:]
 
     payload = {
-        "prompt": full_prompt,
-        "n_predict": max_tokens,
+        "messages": messages,
+        "max_tokens": max_tokens,
         "temperature": temp,
-        "stop": ["<|im_end|>", "<|im_start|>"]
     }
     try:
         req = urllib.request.Request(
@@ -191,10 +211,12 @@ def query_local_server(prompt_history, max_tokens=400, temp=0.3):
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=120) as response:
+        with urllib.request.urlopen(req, timeout=180) as response:
             res_data = json.loads(response.read().decode("utf-8"))
-            res_text = res_data.get("content", "").strip()
+            res_text = res_data["choices"][0]["message"]["content"].strip()
             res_text = res_text.replace("[end of text]", "").strip()
+            # Срезаем "размышления" reasoning-моделей, если просочились
+            res_text = re.sub(r'<think>.*?</think>', '', res_text, flags=re.DOTALL).strip()
             if not res_text.startswith("THOUGHT:"):
                 res_text = "THOUGHT: " + res_text
             return res_text
@@ -203,17 +225,27 @@ def query_local_server(prompt_history, max_tokens=400, temp=0.3):
 
 def tool_run_bash(command):
     clean_command = command.replace("[end of text]", "").strip()
+    # v9: бан тяжёлых команд — окружение уже настроено через tools/setup.sh.
+    # pkg install душит CPU (модель ловит таймаут) и заливает контекст выводом.
+    BANNED = ["pkg install", "apt install", "pkg upgrade", "apt upgrade",
+              "apt-get install", "termux-setup-storage", "pkg update", "apt update"]
+    for b in BANNED:
+        if b in clean_command:
+            return (f"[BLOCKED: '{b}' is not allowed. The environment is ALREADY fully "
+                    f"set up (storage access, python3, git, curl, wget). Just use the "
+                    f"tools directly. If something is truly missing, tell the user to "
+                    f"run tools/setup.sh manually.]")
     env = os.environ.copy()
     env["DEBIAN_FRONTEND"] = "noninteractive"
-    if "pkg install" in clean_command and "-y" not in clean_command:
-        clean_command = clean_command.replace("pkg install", "pkg install -y")
-    if "apt install" in clean_command and "-y" not in clean_command:
-        clean_command = clean_command.replace("apt install", "apt install -y")
     try:
-        res = subprocess.run(clean_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90, env=env)
-        return (res.stdout + res.stderr).strip() or "[Success - No Output]"
+        res = subprocess.run(clean_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60, env=env)
+        out = (res.stdout + res.stderr).strip() or "[Success - No Output]"
+        # v9: защита контекста модели от огромных выводов
+        if len(out) > 1500:
+            out = out[:1500] + f"\n... [output truncated, {len(out)} chars total]"
+        return out
     except subprocess.TimeoutExpired:
-        return "[Error: Command timed out. Termux is downloading packages in background... Please retry this tool call.]"
+        return "[Error: Command timed out after 60s. Use simpler/faster commands.]"
     except Exception as e:
         return f"[Error: {e}]"
 
@@ -431,7 +463,7 @@ def stop_server(server_process):
             pass
 
 def main():
-    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v8 (LINK EXTRACTION){C_END}")
+    print(f"{C_BLUE}🌊 KELPWAVE - ULTIMATE INTERACTIVE AGENT COMPANION v9 (MODEL-AGNOSTIC){C_END}")
 
     # --- Предполётные проверки (FIX: раньше их не было) ---
     if not os.path.exists(LLAMA_SERVER_PATH):
