@@ -36,6 +36,17 @@ def save_lessons(lessons):
         "last_updated": datetime.now().isoformat()
     }
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    
+    # Автобэкап: сохраняем предыдущую версию перед перезаписью
+    if os.path.exists(MEMORY_FILE):
+        try:
+            backup_path = MEMORY_FILE.replace('.json', '.backup.json')
+            with open(MEMORY_FILE, "r", encoding="utf-8") as src:
+                with open(backup_path, "w", encoding="utf-8") as dst:
+                    dst.write(src.read())
+        except Exception:
+            pass  # бэкап не критичен
+    
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 

@@ -89,6 +89,15 @@ def load_lessons():
     return []
 
 def save_lessons(lessons):
+    # Автобэкап перед перезаписью
+    if os.path.exists(KNOWLEDGE_PATH):
+        try:
+            backup_path = KNOWLEDGE_PATH.replace('.json', '.backup.json')
+            with open(KNOWLEDGE_PATH, "r", encoding="utf-8") as src:
+                with open(backup_path, "w", encoding="utf-8") as dst:
+                    dst.write(src.read())
+        except Exception:
+            pass
     with open(KNOWLEDGE_PATH, "w", encoding="utf-8") as f: json.dump(lessons, f, indent=2, ensure_ascii=False)
 
 def reflect_and_learn(code_attempt, error_output):

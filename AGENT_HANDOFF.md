@@ -100,7 +100,7 @@
 
 ## Текущее состояние (обновлено 2026-06-10)
 
-- **v12 — Self-Improving Agent + Full Guards Restored**:
+- **v12 — Self-Improving Agent + Full Guards Restored** + патч автобэкапа:
   - `agents/kelpwave_companion_v12.py` — основной агент
   - Восстановлены ВСЕ защиты из v4-v9, которые были потеряны в v11:
     - Loop Guard (блокировка повторов, принудительный финал)
@@ -115,19 +115,20 @@
     - Подмешивает в промпт (до 6 последних уроков)
   - Добавлен инструмент run_reflexion
   - `run.py` теперь запускает v12
+  - **Новое (сессия 5): реализован автобэкап памяти**
+    - `tools/memory.py` — перед сохранением agent_lessons.json создаётся agent_lessons.backup.json
+    - `agents/kelpwave_reflexion.py` — перед сохранением lessons_learned.json создаётся lessons_learned.backup.json
 - Репозиторий чистый, ветка main
 - Токен активен до ~17.06.2026.
 
 ## Следующие шаги (бэклог)
 
-1. **Автобэкап памяти**: lessons_learned.json → lessons_learned.backup.json
-   при каждом сохранении (владелец одобрил идею).
-2. Возможное объединение агентов: companion получает инструмент запуска
-   reflexion-сессий.
-3. Постоянная память companion: сохранение истории диалога между запусками.
-4. Владельцу предложено скачать Qwen3-4B-Instruct-2507 (агентная модель):
+1. **~~Автобэкап памяти~~** ✅ ВЫПОЛНЕНО (2026-06-10): реализован в memory.py и reflexion.py
+2. Постоянная память companion: сохранение истории диалога между запусками.
+3. Владельцу предложено скачать Qwen3-4B-Instruct-2507 (агентная модель):
    wget -c -P ~/llama.cpp/models/ "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
    companion v7 подхватит её автоматически. Ждём результата теста.
+4. Улучшить парсинг ACTION_INPUT (иногда модель добавляет markdown-обёртки)
 
 ## Как новому агенту получить проект
 
